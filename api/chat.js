@@ -37,12 +37,24 @@ export default async function handler(req, res) {
         continue;
       }
 
-      const data = await response.json();
+      // Read as text first -- a Vercel timeout/error page comes back as
+      // HTML/plain text, not JSON, and calling response.json() directly
+      // on that throws an unhelpful SyntaxError instead of the real problem.
+      const rawText = await response.text();
+      let data;
+      try {
+        data = JSON.parse(rawText);
+      } catch (parseErr) {
+        console.error(`Non-JSON response from Anthropic API (status ${response.status}):`, rawText.slice(0, 500));
+        return res.status(502).json({
+          error: `Upstream returned a non-JSON response (status ${response.status}). This usually means the function timed out or crashed before Anthropic replied.`,
+          type: 'upstream_non_json',
+          status: response.status,
+        });
+      }
 
       if (!response.ok) {
-        // Log the real reason server-side so it shows up in Vercel function logs.
         console.error(`Anthropic API error (status ${response.status}):`, JSON.stringify(data));
-        // Pass the real error through to the client instead of masking it.
         return res.status(response.status).json({
           error: data.error?.message || `Anthropic API returned status ${response.status}`,
           type: data.error?.type || 'api_error',
